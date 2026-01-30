@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd GPT-2 Small model analysis documentation and diagrams\n\nIncludes detailed analysis of input processing \\(tokenization, embeddings\\) and architecture diagrams using Mermaid format.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git config:*)",
+      "Bash(bash:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
