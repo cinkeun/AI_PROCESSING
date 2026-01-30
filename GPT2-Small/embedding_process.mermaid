@@ -1,0 +1,56 @@
+graph TD
+    Start([Token IDs: 15496, 995<br/>Shape: B×L = 1×2])
+    
+    %% Token Embedding
+    Start --> AddBatch[Add Batch Dimension<br/>Input: L = 2<br/>Output: B×L = 1×2<br/>token_ids = [[15496, 995]]]
+    
+    AddBatch --> TokenEmbedMatrix[Token Embedding Matrix E<br/>Shape: vocab_size × d_model<br/>50,257 × 768<br/>Learnable Parameters: 38.6M]
+    
+    TokenEmbedMatrix --> TokenLookup1[Lookup Token 0<br/>token_id = 15496<br/>E[15496, :] → vector of 768 floats<br/>e.g., [0.234, -0.891, 0.456, ..., -0.123]]
+    
+    TokenEmbedMatrix --> TokenLookup2[Lookup Token 1<br/>token_id = 995<br/>E[995, :] → vector of 768 floats<br/>e.g., [-0.567, 0.123, -0.789, ..., 0.456]]
+    
+    TokenLookup1 --> TokenStack[Stack Token Embeddings<br/>Dimension 0: Batch B=1<br/>Dimension 1: Sequence L=2<br/>Dimension 2: Features d=768]
+    TokenLookup2 --> TokenStack
+    
+    TokenStack --> TokenOut[Token Embeddings Output<br/>Shape: B×L×d = 1×2×768<br/>[[embedding_15496], [embedding_995]]]
+    
+    %% Position Embedding
+    Start --> PosGen[Generate Position Indices<br/>arange0, seq_len<br/>positions = [0, 1]<br/>Shape: L = 2]
+    
+    PosGen --> PosAddBatch[Add Batch Dimension<br/>Shape: B×L = 1×2<br/>position_ids = [[0, 1]]]
+    
+    PosAddBatch --> PosEmbedMatrix[Position Embedding Matrix P<br/>Shape: max_seq_len × d_model<br/>1,024 × 768<br/>Learnable Parameters: 0.79M]
+    
+    PosEmbedMatrix --> PosLookup1[Lookup Position 0<br/>position_id = 0<br/>P[0, :] → vector of 768 floats<br/>e.g., [0.123, 0.456, -0.789, ..., 0.234]]
+    
+    PosEmbedMatrix --> PosLookup2[Lookup Position 1<br/>position_id = 1<br/>P[1, :] → vector of 768 floats<br/>e.g., [-0.345, 0.678, 0.901, ..., -0.567]]
+    
+    PosLookup1 --> PosStack[Stack Position Embeddings<br/>Shape: B×L×d = 1×2×768]
+    PosLookup2 --> PosStack
+    
+    PosStack --> PosOut[Position Embeddings Output<br/>Shape: 1×2×768<br/>[[pos_emb_0], [pos_emb_1]]]
+    
+    %% Combine Embeddings
+    TokenOut --> Combine[Element-wise Addition<br/>token_emb + pos_emb<br/>For each element b,l,d:<br/>output[b,l,d] = token[b,l,d] + pos[b,l,d]]
+    PosOut --> Combine
+    
+    Combine --> Detail1[Position 0 Hello:<br/>[0.234, -0.891, ...] token<br/>+ [0.123, 0.456, ...] position<br/>= [0.357, -0.435, ...] combined]
+    
+    Combine --> Detail2[Position 1 world:<br/>[-0.567, 0.123, ...] token<br/>+ [-0.345, 0.678, ...] position<br/>= [-0.912, 0.801, ...] combined]
+    
+    Detail1 --> Final([Combined Embeddings h₀<br/>Shape: B×L×d = 1×2×768<br/>Ready for Transformer Blocks])
+    Detail2 --> Final
+    
+    %% Styling
+    classDef tokenEmb fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    classDef posEmb fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef combine fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef output fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    classDef detail fill:#fce4ec,stroke:#880e4f,stroke-width:1px
+    
+    class AddBatch,TokenEmbedMatrix,TokenLookup1,TokenLookup2,TokenStack,TokenOut tokenEmb
+    class PosGen,PosAddBatch,PosEmbedMatrix,PosLookup1,PosLookup2,PosStack,PosOut posEmb
+    class Combine combine
+    class Detail1,Detail2 detail
+    class Final output

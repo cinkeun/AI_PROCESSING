@@ -1,0 +1,100 @@
+graph TD
+    subgraph "1. TOKENIZATION BPE"
+        T1[Text: Hello world<br/>Type: String]
+        T2[UTF-8 Bytes<br/>72,101,108,108,111,32,119,111,114,108,100<br/>Type: bytes array]
+        T3[Unicode Chars<br/>H,e,l,l,o,Ġ,w,o,r,l,d<br/>Count: 11 chars]
+        T4[BPE Merges Applied<br/>Learned merge rules<br/>Priority-based merging]
+        T5[Final Tokens<br/>Hello, Ġworld<br/>Count: 2 tokens]
+        T6[Token IDs<br/>15496, 995<br/>Shape: L=2<br/>dtype: int64]
+        
+        T1 --> T2
+        T2 --> T3
+        T3 --> T4
+        T4 --> T5
+        T5 --> T6
+    end
+    
+    subgraph "2. TOKEN EMBEDDING"
+        TE1[Token IDs<br/>15496, 995<br/>Shape: 1×2]
+        TE2[Embedding Matrix E<br/>Shape: 50257×768<br/>Params: 38,597,376<br/>Learnable: Yes]
+        TE3[Lookup Operation<br/>E[15496,:] → 768 floats<br/>E[995,:] → 768 floats<br/>Operation: Index Select]
+        TE4[Token Embeddings<br/>Shape: 1×2×768<br/>dtype: float32<br/>Memory: 6,144 bytes]
+        
+        TE1 --> TE3
+        TE2 -.->|lookup| TE3
+        TE3 --> TE4
+    end
+    
+    subgraph "3. POSITION EMBEDDING"
+        PE1[Sequence Length L=2<br/>Generate positions<br/>[0, 1]]
+        PE2[Position IDs<br/>Shape: 1×2<br/>[[0, 1]]]
+        PE3[Position Matrix P<br/>Shape: 1024×768<br/>Params: 786,432<br/>Learnable: Yes]
+        PE4[Lookup Operation<br/>P[0,:] → 768 floats<br/>P[1,:] → 768 floats<br/>Operation: Index Select]
+        PE5[Position Embeddings<br/>Shape: 1×2×768<br/>dtype: float32<br/>Memory: 6,144 bytes]
+        
+        PE1 --> PE2
+        PE2 --> PE4
+        PE3 -.->|lookup| PE4
+        PE4 --> PE5
+    end
+    
+    subgraph "4. EMBEDDING ADDITION"
+        ADD1[Token Embeddings<br/>Shape: 1×2×768<br/>[[e₀₀, e₀₁, ..., e₀₇₆₇],<br/> [e₁₀, e₁₁, ..., e₁₇₆₇]]]
+        ADD2[Position Embeddings<br/>Shape: 1×2×768<br/>[[p₀₀, p₀₁, ..., p₀₇₆₇],<br/> [p₁₀, p₁₁, ..., p₁₇₆₇]]]
+        ADD3[Element-wise Addition<br/>output[b,l,d] =<br/>token[b,l,d] + pos[b,l,d]<br/>Operations: 1×2×768 = 1,536 adds]
+        ADD4[Combined Embeddings h₀<br/>Shape: 1×2×768<br/>dtype: float32<br/>Memory: 6,144 bytes<br/>Ready for Transformers]
+        
+        ADD1 --> ADD3
+        ADD2 --> ADD3
+        ADD3 --> ADD4
+    end
+    
+    T6 ==> TE1
+    TE4 ==> ADD1
+    PE5 ==> ADD2
+    
+    %% Matrix Dimension Details
+    subgraph "DIMENSION FLOW"
+        D1[Input: Text string<br/>Variable length]
+        D2[After Tokenization<br/>Shape: L<br/>e.g., L=2]
+        D3[After Batch<br/>Shape: B×L<br/>e.g., 1×2]
+        D4[After Token Embedding<br/>Shape: B×L×d<br/>e.g., 1×2×768]
+        D5[After Position Embedding<br/>Shape: B×L×d<br/>e.g., 1×2×768]
+        D6[After Addition<br/>Shape: B×L×d<br/>e.g., 1×2×768]
+        
+        D1 -.-> D2
+        D2 -.-> D3
+        D3 -.-> D4
+        D4 -.-> D5
+        D5 -.-> D6
+    end
+    
+    %% Mathematical Operations
+    subgraph "OPERATIONS SUMMARY"
+        OP1[Tokenization: O L<br/>BPE merge iterations]
+        OP2[Token Embedding: O B×L<br/>Index lookups]
+        OP3[Position Embedding: O B×L<br/>Index lookups]
+        OP4[Addition: O B×L×d<br/>1,536 operations]
+    end
+    
+    %% Memory Summary
+    subgraph "MEMORY SUMMARY"
+        MEM1[Token Emb Matrix E<br/>50257×768 × 4 bytes<br/>≈ 154 MB]
+        MEM2[Position Emb Matrix P<br/>1024×768 × 4 bytes<br/>≈ 3.1 MB]
+        MEM3[Activations per sample<br/>1×2×768 × 3 tensors<br/>≈ 18 KB]
+        MEM4[Total Parameters<br/>38,597,376 + 786,432<br/>= 39,383,808 params<br/>≈ 157 MB]
+    end
+    
+    %% Styling
+    classDef tokenization fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef embedding fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef position fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef combine fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
+    classDef info fill:#fff9c4,stroke:#f57f17,stroke-width:1px
+    classDef output fill:#ffccbc,stroke:#d84315,stroke-width:2px
+    
+    class T1,T2,T3,T4,T5,T6 tokenization
+    class TE1,TE2,TE3,TE4 embedding
+    class PE1,PE2,PE3,PE4,PE5 position
+    class ADD1,ADD2,ADD3,ADD4 combine
+    class D1,D2,D3,D4,D5,D6,OP1,OP2,OP3,OP4,MEM1,MEM2,MEM3,MEM4 info

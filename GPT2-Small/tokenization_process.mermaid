@@ -1,0 +1,34 @@
+graph TD
+    Start([Input Text: 'Hello world'])
+    
+    %% Tokenization Process
+    Start --> ByteConv[Step 1: UTF-8 Byte Conversion<br/>Text → Bytes<br/>Hello world<br/>→ 72,101,108,108,111,32,119,111,114,108,100]
+    
+    ByteConv --> UniMap[Step 2: Byte-to-Unicode Mapping<br/>Bytes → Unicode chars<br/>72→H, 101→e, 108→l, 111→o<br/>32→Ġ space, 119→w, 114→r, 100→d<br/>Result: H,e,l,l,o,Ġ,w,o,r,l,d]
+    
+    UniMap --> BPEInit[Step 3: Initial Token Sequence<br/>Characters: H,e,l,l,o,Ġ,w,o,r,l,d<br/>Length: 11 tokens]
+    
+    BPEInit --> BPEMerge1[BPE Merge Iteration 1<br/>Find pair with lowest rank<br/>H + e → He rank 100<br/>Tokens: He,l,l,o,Ġ,w,o,r,l,d]
+    
+    BPEMerge1 --> BPEMerge2[BPE Merge Iteration 2<br/>w + o → wo rank 120<br/>Tokens: He,l,l,o,Ġ,wo,r,l,d]
+    
+    BPEMerge2 --> BPEMerge3[BPE Merge Iteration 3<br/>l + l → ll rank 150<br/>Tokens: He,ll,o,Ġ,wo,r,l,d]
+    
+    BPEMerge3 --> BPEContinue[... Continue merging ...<br/>Following learned merge rules<br/>in priority order]
+    
+    BPEContinue --> BPEFinal[Final BPE Tokens<br/>Hello, Ġworld<br/>Length: 2 tokens]
+    
+    BPEFinal --> VocabLookup[Step 4: Vocabulary Lookup<br/>Token → ID mapping<br/>Hello → 15496<br/>Ġworld → 995]
+    
+    VocabLookup --> TokenIDs([Token IDs Output<br/>15496, 995<br/>Shape: L = 2])
+    
+    %% Styling
+    classDef byteProcess fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef bpeProcess fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef vocabProcess fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef output fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    
+    class ByteConv,UniMap byteProcess
+    class BPEInit,BPEMerge1,BPEMerge2,BPEMerge3,BPEContinue,BPEFinal bpeProcess
+    class VocabLookup vocabProcess
+    class TokenIDs output

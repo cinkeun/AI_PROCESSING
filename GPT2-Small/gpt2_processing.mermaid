@@ -1,0 +1,91 @@
+graph TD
+    Start([Input Text: 'Hello world'])
+    
+    %% Tokenization
+    Start --> Token[Tokenization<br/>Text → Token IDs<br/>Output: seq_len integers]
+    
+    %% Input Embedding
+    Token --> Embed[Token Embedding Lookup<br/>Input: batch_size × seq_len<br/>Embedding Matrix: vocab_size × d_model<br/>50257 × 768<br/>Output: batch_size × seq_len × 768]
+    
+    %% Position Embedding
+    Embed --> PosEmbed[Position Embedding<br/>Position Matrix: max_seq_len × d_model<br/>1024 × 768<br/>Output: batch_size × seq_len × 768]
+    
+    %% Add Embeddings
+    PosEmbed --> AddEmbed[Add Token + Position Embeddings<br/>Input: batch_size × seq_len × 768<br/>Output: batch_size × seq_len × 768]
+    
+    %% Layer 0 starts
+    AddEmbed --> L0_LN1[Layer 0: LayerNorm 1<br/>Input: B × L × 768<br/>Normalize over d_model dimension<br/>Params: γ,β shape 768<br/>Output: B × L × 768]
+    
+    L0_LN1 --> L0_Attn[Layer 0: Multi-Head Attention<br/>12 heads, d_head=64]
+    
+    L0_Attn --> L0_QKV[QKV Projection<br/>Input: B × L × 768<br/>W_qkv: 768 × 2304 3×768<br/>Output Q,K,V: B × L × 768 each]
+    
+    L0_QKV --> L0_Reshape[Reshape for Multi-Head<br/>Q,K,V: B × L × 768<br/>→ B × 12 × L × 64<br/>12 heads × 64 dim per head]
+    
+    L0_Reshape --> L0_Score[Attention Score<br/>Q × K^T<br/>B × 12 × L × 64 · B × 12 × 64 × L<br/>Output: B × 12 × L × L]
+    
+    L0_Score --> L0_Scale[Scale by √d_head<br/>Score / √64 = Score / 8<br/>Output: B × 12 × L × L]
+    
+    L0_Scale --> L0_Mask[Apply Causal Mask<br/>Mask future positions<br/>Output: B × 12 × L × L]
+    
+    L0_Mask --> L0_Softmax[Softmax<br/>Along last dimension<br/>Output: B × 12 × L × L]
+    
+    L0_Softmax --> L0_AttnV[Attention × V<br/>B × 12 × L × L · B × 12 × L × 64<br/>Output: B × 12 × L × 64]
+    
+    L0_AttnV --> L0_Concat[Concat Heads<br/>B × 12 × L × 64<br/>→ B × L × 768]
+    
+    L0_Concat --> L0_Proj[Output Projection<br/>W_o: 768 × 768<br/>Input: B × L × 768<br/>Output: B × L × 768]
+    
+    L0_Proj --> L0_Residual1[Residual Connection 1<br/>Add original input<br/>Output: B × L × 768]
+    
+    L0_Residual1 --> L0_LN2[Layer 0: LayerNorm 2<br/>Input: B × L × 768<br/>Normalize over d_model<br/>Output: B × L × 768]
+    
+    L0_LN2 --> L0_FFN[Layer 0: Feed-Forward Network]
+    
+    L0_FFN --> L0_FC1[FC Layer 1<br/>W1: 768 × 3072<br/>Input: B × L × 768<br/>Output: B × L × 3072]
+    
+    L0_FC1 --> L0_GELU[GELU Activation<br/>Element-wise non-linearity<br/>Output: B × L × 3072]
+    
+    L0_GELU --> L0_FC2[FC Layer 2<br/>W2: 3072 × 768<br/>Input: B × L × 3072<br/>Output: B × L × 768]
+    
+    L0_FC2 --> L0_Residual2[Residual Connection 2<br/>Add pre-FFN input<br/>Output: B × L × 768]
+    
+    %% Indicate more layers
+    L0_Residual2 --> MoreLayers[... Layers 1-10 ...<br/>Same structure repeated<br/>11 more transformer blocks]
+    
+    %% Layer 11 (final layer)
+    MoreLayers --> L11_LN1[Layer 11: LayerNorm 1<br/>Input: B × L × 768<br/>Output: B × L × 768]
+    
+    L11_LN1 --> L11_Attn[Layer 11: Multi-Head Attention<br/>Same structure as Layer 0<br/>Output: B × L × 768]
+    
+    L11_Attn --> L11_Residual1[Residual Connection 1<br/>Output: B × L × 768]
+    
+    L11_Residual1 --> L11_LN2[Layer 11: LayerNorm 2<br/>Output: B × L × 768]
+    
+    L11_LN2 --> L11_FFN[Layer 11: FFN<br/>768 → 3072 → 768<br/>Output: B × L × 768]
+    
+    L11_FFN --> L11_Residual2[Residual Connection 2<br/>Output: B × L × 768]
+    
+    %% Final LayerNorm
+    L11_Residual2 --> FinalLN[Final LayerNorm<br/>Input: B × L × 768<br/>Normalize over d_model<br/>Output: B × L × 768]
+    
+    %% Language Model Head
+    FinalLN --> LMHead[Language Model Head<br/>W_lm: 768 × 50257<br/>Tied with token embedding<br/>Input: B × L × 768<br/>Output: B × L × 50257]
+    
+    %% Softmax (optional, for generation)
+    LMHead --> Softmax[Softmax optional<br/>For next token prediction<br/>Along vocab dimension<br/>Output: B × L × 50257]
+    
+    Softmax --> Output([Output Logits/Probabilities<br/>Shape: B × L × 50257<br/>Next token prediction])
+    
+    %% Styling
+    classDef embedding fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    classDef attention fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef ffn fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef norm fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
+    classDef output fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    
+    class Embed,PosEmbed,AddEmbed embedding
+    class L0_Attn,L0_QKV,L0_Reshape,L0_Score,L0_Scale,L0_Mask,L0_Softmax,L0_AttnV,L0_Concat,L0_Proj,L11_Attn attention
+    class L0_FFN,L0_FC1,L0_GELU,L0_FC2,L11_FFN ffn
+    class L0_LN1,L0_LN2,L11_LN1,L11_LN2,FinalLN norm
+    class LMHead,Softmax,Output output
