@@ -345,6 +345,49 @@ Position Embedding을 더하면:
 └─────────────────────────────────────────────┘
 ```
 
+**Position Embedding Lookup 방식:**
+
+Position Embedding은 **토큰 내용과 무관**하게, 오직 **위치 인덱스**로만 결정됩니다:
+
+```
+Position Embedding lookup:
+
+토큰이 뭐든 상관없이:
+- 0번째 위치 → P[0] (768개 값)
+- 1번째 위치 → P[1] (768개 값)
+- 2번째 위치 → P[2] (768개 값)
+- n번째 위치 → P[n] (768개 값)
+
+예시:
+"Hello world"     → positions [0, 1] → P[0], P[1]
+"The cat"         → positions [0, 1] → P[0], P[1]  ← 같은 P[0], P[1]!
+"I love you so"   → positions [0, 1, 2, 3] → P[0], P[1], P[2], P[3]
+```
+
+```
+Token Embedding vs Position Embedding 비교:
+┌─────────────────────────────────────────────────────────────────┐
+│ Token Embedding:    검색 키 = token_id (토큰 내용)               │
+│   "Hello" → E[15496], "world" → E[995]                         │
+│                                                                 │
+│ Position Embedding: 검색 키 = position (위치 인덱스)             │
+│   위치 0 → P[0], 위치 1 → P[1] (토큰이 뭔지 안 봄!)              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Position Embedding 값의 특성:**
+
+```
+P[0], P[1], ..., P[1023]의 768개 값들:
+
+✗ 고정된 공식 (sin/cos) → GPT-2는 아님 (Original Transformer는 사용)
+✗ 랜덤 값
+✓ 학습된 파라미터 (Training 중 최적화됨)
+
+모델이 "위치 0은 이런 패턴, 위치 1은 저런 패턴"을
+스스로 학습해서 저장해둔 값 (각 위치의 고유한 "지문")
+```
+
 **입력/출력:**
 ```
 Input:  position indices [0, 1, 2, ..., L-1]
