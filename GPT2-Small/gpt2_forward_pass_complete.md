@@ -74,23 +74,122 @@ Output: [15496, 995] (토큰 ID 배열)
 
 **처리 과정:**
 
+**Step 1: UTF-8 바이트로 분해**
 ```python
-# Step 1: UTF-8 인코딩
 text = "Hello world"
-bytes_list = [72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]
-
-# Step 2: Byte-to-Unicode 매핑
-initial_tokens = ['H', 'e', 'l', 'l', 'o', 'Ġ', 'w', 'o', 'r', 'l', 'd']
-
-# Step 3: BPE 병합 규칙 적용 (반복)
-# Iteration 1: ['He', 'l', 'l', 'o', 'Ġ', 'w', 'o', 'r', 'l', 'd']
-# Iteration 2: ['He', 'll', 'o', 'Ġ', 'wo', 'r', 'l', 'd']
-# ...
-# Final: ['Hello', 'Ġworld']
-
-# Step 4: Vocabulary 룩업
-token_ids = [15496, 995]
+bytes_list = text.encode('utf-8')
+# [72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]
+#  H   e    l    l    o   공백  w    o    r    l    d
 ```
+
+**Step 2: 바이트 → 유니코드 문자 매핑**
+
+GPT-2는 256개 바이트를 출력 가능한 유니코드 문자로 1:1 매핑합니다:
+```python
+# GPT-2의 byte_encoder (encoder.json에 정의됨)
+byte_encoder = {
+    32: 'Ġ',    # 공백(space)은 'Ġ'로 표현
+    72: 'H',
+    101: 'e',
+    108: 'l',
+    111: 'o',
+    119: 'w',
+    114: 'r',
+    100: 'd',
+    ...  # 총 256개 매핑
+}
+
+initial_tokens = ['H', 'e', 'l', 'l', 'o', 'Ġ', 'w', 'o', 'r', 'l', 'd']
+```
+
+**Step 3: BPE Merge (핵심 알고리즘)**
+
+GPT-2는 **50,000개의 merge 규칙**을 학습해둔 파일(`merges.txt`)을 가지고 있습니다:
+```
+# merges.txt (우선순위 순서로 정렬됨)
+Line 1: e r      → "er" 병합
+Line 2: H e      → "He" 병합
+Line 3: l l      → "ll" 병합
+...
+Line 1234: He ll  → "Hell" 병합
+Line 5678: Hell o → "Hello" 병합
+Line 9012: Ġ w    → "Ġw" 병합
+Line 9876: Ġw orld → "Ġworld" 병합
+```
+
+**병합 과정 (반복):**
+```
+초기:     ['H', 'e', 'l', 'l', 'o', 'Ġ', 'w', 'o', 'r', 'l', 'd']
+
+반복 1:   모든 인접 쌍 중 merges.txt에서 가장 높은 우선순위 찾기
+          ('H','e') → 'He' 발견!
+결과:     ['He', 'l', 'l', 'o', 'Ġ', 'w', 'o', 'r', 'l', 'd']
+
+반복 2:   ('l','l') → 'll' 발견!
+결과:     ['He', 'll', 'o', 'Ġ', 'w', 'o', 'r', 'l', 'd']
+
+반복 3:   ('o','r') → 'or' 발견!
+결과:     ['He', 'll', 'o', 'Ġ', 'w', 'or', 'l', 'd']
+
+반복 4:   ('or','l') → 'orl' 발견!
+결과:     ['He', 'll', 'o', 'Ġ', 'w', 'orl', 'd']
+
+반복 5:   ('orl','d') → 'orld' 발견!
+결과:     ['He', 'll', 'o', 'Ġ', 'w', 'orld']
+
+반복 6:   ('He','ll') → 'Hell' 발견!
+결과:     ['Hell', 'o', 'Ġ', 'w', 'orld']
+
+반복 7:   ('Hell','o') → 'Hello' 발견!
+결과:     ['Hello', 'Ġ', 'w', 'orld']
+
+반복 8:   ('Ġ','w') → 'Ġw' 발견!
+결과:     ['Hello', 'Ġw', 'orld']
+
+반복 9:   ('Ġw','orld') → 'Ġworld' 발견!
+결과:     ['Hello', 'Ġworld']
+
+반복 10:  더 이상 병합 가능한 쌍 없음 → 종료
+최종:     ['Hello', 'Ġworld']
+```
+
+**Step 4: Vocabulary Lookup**
+
+GPT-2는 **vocab.json** 파일에 50,257개 토큰의 문자열→ID 매핑을 저장:
+```python
+# vocab.json (실제 GPT-2 vocabulary)
+vocab = {
+    "Hello": 15496,
+    "Ġworld": 995,
+    "the": 1169,
+    "Ġthe": 262,
+    ...  # 총 50,257개 토큰
+}
+
+# 최종 변환
+final_tokens = ['Hello', 'Ġworld']
+token_ids = [vocab['Hello'], vocab['Ġworld']]
+         # = [15496, 995]
+```
+
+**전체 흐름 요약:**
+```
+"Hello world"
+      ↓ UTF-8 encode
+[72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100]
+      ↓ byte_encoder 매핑
+['H', 'e', 'l', 'l', 'o', 'Ġ', 'w', 'o', 'r', 'l', 'd']
+      ↓ BPE merge (merges.txt 규칙 적용)
+['Hello', 'Ġworld']
+      ↓ vocab.json lookup
+[15496, 995]
+```
+
+**핵심 파일:**
+- `encoder.json` (또는 `vocab.json`): 토큰 문자열 ↔ ID 매핑 (50,257개)
+- `vocab.bpe` (또는 `merges.txt`): BPE 병합 규칙 (50,000개)
+
+**참고:** `Ġ`는 "이 토큰 앞에 공백이 있음"을 의미합니다. 따라서 `Ġworld`는 " world"를 나타냅니다.
 
 **수학적 표현:**
 ```
