@@ -17,7 +17,7 @@ graph TD
     subgraph "2. TOKEN EMBEDDING"
         TE1[Token IDs<br/>15496, 995<br/>Shape: 1×2]
         TE2[Embedding Matrix E<br/>Shape: 50257×768<br/>Params: 38,597,376<br/>Learnable: Yes]
-        TE3[Lookup Operation<br/>E[15496,:] → 768 floats<br/>E[995,:] → 768 floats<br/>Operation: Index Select]
+        TE3[Lookup Operation<br/>E&#91;15496,:&#93; → 768 floats<br/>E&#91;995,:&#93; → 768 floats<br/>Operation: Index Select]
         TE4[Token Embeddings<br/>Shape: 1×2×768<br/>dtype: float32<br/>Memory: 6,144 bytes]
         
         TE1 --> TE3
@@ -27,9 +27,9 @@ graph TD
     
     subgraph "3. POSITION EMBEDDING"
         PE1[Sequence Length L=2<br/>Generate positions<br/>[0, 1]]
-        PE2[Position IDs<br/>Shape: 1×2<br/>[[0, 1]]]
+        PE2[Position IDs<br/>Shape: 1×2<br/>&#91;&#91;0, 1&#93;&#93;]
         PE3[Position Matrix P<br/>Shape: 1024×768<br/>Params: 786,432<br/>Learnable: Yes]
-        PE4[Lookup Operation<br/>P[0,:] → 768 floats<br/>P[1,:] → 768 floats<br/>Operation: Index Select]
+        PE4[Lookup Operation<br/>P&#91;0,:&#93; → 768 floats<br/>P&#91;1,:&#93; → 768 floats<br/>Operation: Index Select]
         PE5[Position Embeddings<br/>Shape: 1×2×768<br/>dtype: float32<br/>Memory: 6,144 bytes]
         
         PE1 --> PE2
@@ -39,9 +39,9 @@ graph TD
     end
     
     subgraph "4. EMBEDDING ADDITION"
-        ADD1[Token Embeddings<br/>Shape: 1×2×768<br/>[[e₀₀, e₀₁, ..., e₀₇₆₇],<br/> [e₁₀, e₁₁, ..., e₁₇₆₇]]]
-        ADD2[Position Embeddings<br/>Shape: 1×2×768<br/>[[p₀₀, p₀₁, ..., p₀₇₆₇],<br/> [p₁₀, p₁₁, ..., p₁₇₆₇]]]
-        ADD3[Element-wise Addition<br/>output[b,l,d] =<br/>token[b,l,d] + pos[b,l,d]<br/>Operations: 1×2×768 = 1,536 adds]
+        ADD1[Token Embeddings<br/>Shape: 1×2×768<br/>&#91;&#91;e₀₀, e₀₁, ..., e₀₇₆₇&#93;,<br/> &#91;e₁₀, e₁₁, ..., e₁₇₆₇&#93;&#93;]
+        ADD2[Position Embeddings<br/>Shape: 1×2×768<br/>&#91;&#91;p₀₀, p₀₁, ..., p₀₇₆₇&#93;,<br/> &#91;p₁₀, p₁₁, ..., p₁₇₆₇&#93;&#93;]
+        ADD3[Element-wise Addition<br/>output&#91;b,l,d&#93; =<br/>token&#91;b,l,d&#93; + pos&#91;b,l,d&#93;<br/>Operations: 1×2×768 = 1,536 adds]
         ADD4[Combined Embeddings h₀<br/>Shape: 1×2×768<br/>dtype: float32<br/>Memory: 6,144 bytes<br/>Ready for Transformers]
         
         ADD1 --> ADD3
