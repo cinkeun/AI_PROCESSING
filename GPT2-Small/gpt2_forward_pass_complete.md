@@ -935,12 +935,54 @@ Memory (critical!):
 scores shape: [B, H, L, L] = [1, 12, 1024, 1024]
                  ↑  ↑   ↑    ↑
                  B  h   i    j
+               dim0 dim1 dim2 dim3
 
 h = head index     (0~11, 총 12개 헤드)
 i = query position (0~L-1, "내가 어디서 보고 있나")
 j = key position   (0~L-1, "어디를 보고 있나")
 
-scores[h, i, :] → 헤드 h에서, 위치 i의 토큰이 모든 위치(j=0~L-1)를 얼마나 attend하는지
+scores[b, h, i, :] → 헤드 h에서, 위치 i의 토큰이 모든 위치(j=0~L-1)를 얼마나 attend하는지
+```
+
+**Softmax 적용 차원 (dim=-1, 즉 j):**
+```python
+attn_weights = F.softmax(scores, dim=-1)  # PyTorch 코드
+                               ↑
+                          마지막 차원 (j, key position)
+```
+
+```
+왜 마지막 차원(j)에 softmax를 적용하는가?
+
+┌─────────────────────────────────────────────────────────┐
+│ scores[b, h, i, :] = query i가 모든 key j에 대한 점수   │
+│                              ↓ softmax (dim=-1)         │
+│ attn[b, h, i, :]   = query i가 각 key j를 attend할 확률 │
+│                      (합 = 1.0)                         │
+└─────────────────────────────────────────────────────────┘
+
+의미:
+├─ i (dim=2): "나는 position i에서 보고 있다" (query)
+├─ j (dim=3): "position j들을 얼마나 볼까" (keys)
+└─ softmax(dim=-1): j들에 대한 확률 분포 생성
+
+차원별 softmax 적용 여부:
+┌──────┬─────────┬────────────────────┬──────────┐
+│ dim  │ 인덱스  │ 역할               │ softmax? │
+├──────┼─────────┼────────────────────┼──────────┤
+│ 0    │ B       │ batch              │ ❌       │
+│ 1    │ H       │ head               │ ❌       │
+│ 2    │ i       │ query position     │ ❌       │
+│ 3    │ j       │ key position       │ ✅       │
+└──────┴─────────┴────────────────────┴──────────┘
+
+❌ 만약 dim=2 (i)에 softmax를 적용했다면?
+   scores[b, h, :, j] → "key j가 어떤 query i에게 attend 받을까?"
+   → attention의 본래 의미가 아님! (역방향)
+
+✅ dim=-1 (j)에 softmax 적용:
+   scores[b, h, i, :] → "query i가 어떤 key j를 attend할까?"
+   → 이것이 attention의 정의
 ```
 
 **Softmax 상세 연산:**
