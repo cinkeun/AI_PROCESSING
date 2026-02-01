@@ -741,6 +741,90 @@ Memory Bandwidth (L=1024):
 Optimization: Fuse with next operation (avoid write-read)
 ```
 
+**√(var + ε) 하드웨어 구현:**
+
+LayerNorm의 정규화 단계에서 `1/√(var + ε)` 연산이 필요합니다. sqrt는 비선형 연산이므로 하드웨어에서 특별한 처리가 필요합니다:
+
+```
+왜 sqrt가 필요한가:
+├─ 정규화: x_norm = (x - μ) / √(σ² + ε)
+├─ 비선형 연산 → 단순 곱/덧셈으로 불가
+└─ 하드웨어 구현이 필요
+
+rsqrt (Reciprocal Square Root) 접근:
+├─ 1/√x를 먼저 계산 (rsqrt)
+├─ x · rsqrt(x) = √x (필요시)
+├─ rsqrt가 더 효율적인 이유:
+│  └─ 나눗셈을 곱셈으로 변환
+│  └─ (x - μ) × rsqrt(var) = 정규화
+└─ GPU/NPU 모두 rsqrt 명령어 내장
+
+LUT + Newton-Raphson (가장 흔한 구현):
+┌─────────────────────────────────────────────────────────┐
+│ Step 1: LUT로 초기값 추정                                │
+│   - 상위 7-8 비트로 테이블 인덱싱                        │
+│   - 128-256 엔트리 LUT                                  │
+│   - 초기 정확도: ~8 비트                                 │
+│                                                         │
+│ Step 2: Newton-Raphson 반복 (1-2회)                     │
+│   y_new = y × (1.5 - 0.5 × x × y²)                     │
+│   - 1회 반복: ~16 비트 정확도                            │
+│   - 2회 반복: ~32 비트 정확도 (FP32 충분)                │
+│   - 곱셈만 사용 (나눗셈 없음!)                           │
+└─────────────────────────────────────────────────────────┘
+
+Non-uniform LUT 설계:
+├─ Uniform spacing은 비효율적
+│  └─ √x는 작은 x에서 변화가 급격
+│  └─ 큰 x에서는 완만 → 해상도 낭비
+├─ Log-domain 처리:
+│  └─ FP32: 지수부(8비트) + 가수부(23비트) 분리
+│  └─ 지수부: 2로 나눔 (right shift)
+│  └─ 가수부: LUT로 처리
+├─ Piecewise Linear:
+│  └─ 구간별 기울기 + offset 저장
+│  └─ LUT 크기 절약
+└─ 작은 값에 촘촘하게 (Non-linear spacing)
+
+NPU/TPU 최적화:
+┌─────────────────────────────────────────────────────────┐
+│ BF16 (Brain Float 16):                                  │
+│   - 가수부 7비트만 → LUT 128 엔트리로 충분              │
+│   - NR 반복 없이 LUT만으로 정확도 확보                  │
+│   - 면적/전력 절약                                      │
+│                                                         │
+│ CORDIC 알고리즘:                                        │
+│   - Shift + Add만으로 sqrt 계산                         │
+│   - LUT 불필요 (면적 최소화)                            │
+│   - 반복 횟수로 정확도 조절                             │
+│   - 저전력 엣지 디바이스에 적합                         │
+│                                                         │
+│ LayerNorm 특화 최적화:                                  │
+│   - Variance는 항상 양수                                │
+│   - 범위가 예측 가능 (학습된 분포)                      │
+│   - LUT 범위를 좁게 설계 가능                           │
+└─────────────────────────────────────────────────────────┘
+
+하드웨어별 구현:
+┌──────────┬────────────────────────────────────────────┐
+│ Hardware │ sqrt/rsqrt Implementation                  │
+├──────────┼────────────────────────────────────────────┤
+│ Intel CPU│ RSQRTSS (SSE) + 1 NR iteration            │
+│          │ ~5 cycles + ~10 cycles = 15 cycles        │
+├──────────┼────────────────────────────────────────────┤
+│ NVIDIA   │ SFU (Special Function Unit)               │
+│ GPU      │ rsqrtf(): ~8 cycles, full precision       │
+│          │ __frsqrt_rn(): ~2 cycles, fast approx     │
+├──────────┼────────────────────────────────────────────┤
+│ Apple    │ Vector rsqrt in Neural Engine             │
+│ NPU      │ Fused with LayerNorm pipeline             │
+│          │ ~1 cycle amortized (pipelined)            │
+├──────────┼────────────────────────────────────────────┤
+│ TPU      │ BF16 optimized LUT                        │
+│          │ Fused bfloat16 rsqrt                      │
+└──────────┴────────────────────────────────────────────┘
+```
+
 ---
 
 ### 2.2 Multi-Head Self-Attention
