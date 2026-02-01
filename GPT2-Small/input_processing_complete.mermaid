@@ -49,10 +49,40 @@ graph TD
         ADD3 --> ADD4
     end
     
+    subgraph "5. LAYER NORMALIZATION"
+        LN1[Combined Embeddings h₀<br/>Shape: 1×2×768<br/>Input from Addition]
+        LN2[Mean Calculation<br/>μ = mean dim=-1<br/>Per-token: 768 values → 1 value<br/>Shape: 1×2×1]
+        LN3[Variance Calculation<br/>σ² = var dim=-1<br/>Per-token: 768 values → 1 value<br/>Shape: 1×2×1]
+        LN4[Normalize<br/>x̂ = x - μ / √ σ² + ε<br/>ε = 1e-5<br/>Shape: 1×2×768]
+        LN5[Scale & Shift<br/>y = γ · x̂ + β<br/>γ, β: learnable 768 params<br/>Shape: 1×2×768]
+        LN6[Output<br/>Shape: 1×2×768<br/>Ready for Attention]
+
+        LN1 --> LN2
+        LN1 --> LN3
+        LN2 --> LN4
+        LN3 --> LN4
+        LN4 --> LN5
+        LN5 --> LN6
+    end
+
+    subgraph "5-1. SQRT HARDWARE IMPLEMENTATION"
+        HW1[Why sqrt is needed<br/>Normalize: x / √var<br/>Non-linear operation]
+        HW2[rsqrt approach<br/>1/√x more efficient<br/>Then: x · rsqrt x = √x]
+        HW3[LUT + Newton-Raphson<br/>1 Upper bits → LUT initial guess<br/>2 NR iteration 1-2 times<br/>y = y·1.5 - 0.5·x·y²]
+        HW4[Non-uniform LUT<br/>Log-domain: exp/mantissa split<br/>Piecewise: slope+offset per segment<br/>Small values need finer resolution]
+        HW5[NPU/TPU Optimization<br/>BF16: 7-bit mantissa → LUT only<br/>CORDIC: shift+add only, small area<br/>Variance range predictable]
+
+        HW1 --> HW2
+        HW2 --> HW3
+        HW3 --> HW4
+        HW4 --> HW5
+    end
+
     T6 ==> TE1
     TE4 ==> ADD1
     PE5 ==> ADD2
-    
+    ADD4 ==> LN1
+
     %% Matrix Dimension Details
     subgraph "DIMENSION FLOW"
         D1[Input: Text string<br/>Variable length]
@@ -61,12 +91,14 @@ graph TD
         D4[After Token Embedding<br/>Shape: B×L×d<br/>e.g., 1×2×768]
         D5[After Position Embedding<br/>Shape: B×L×d<br/>e.g., 1×2×768]
         D6[After Addition<br/>Shape: B×L×d<br/>e.g., 1×2×768]
-        
+        D7[After LayerNorm<br/>Shape: B×L×d<br/>e.g., 1×2×768<br/>mean=0, var=1 per token]
+
         D1 -.-> D2
         D2 -.-> D3
         D3 -.-> D4
         D4 -.-> D5
         D5 -.-> D6
+        D6 -.-> D7
     end
     
     %% Mathematical Operations
@@ -75,14 +107,16 @@ graph TD
         OP2[Token Embedding: O B×L<br/>Index lookups]
         OP3[Position Embedding: O B×L<br/>Index lookups]
         OP4[Addition: O B×L×d<br/>1,536 operations]
+        OP5[LayerNorm: O B×L×d<br/>mean, var, sqrt, scale<br/>Per token: 768 → mean, var<br/>+ 1 sqrt + 768×3 ops]
     end
     
     %% Memory Summary
     subgraph "MEMORY SUMMARY"
         MEM1[Token Emb Matrix E<br/>50257×768 × 4 bytes<br/>≈ 154 MB]
         MEM2[Position Emb Matrix P<br/>1024×768 × 4 bytes<br/>≈ 3.1 MB]
-        MEM3[Activations per sample<br/>1×2×768 × 3 tensors<br/>≈ 18 KB]
-        MEM4[Total Parameters<br/>38,597,376 + 786,432<br/>= 39,383,808 params<br/>≈ 157 MB]
+        MEM3[LayerNorm Params<br/>γ: 768, β: 768<br/>1,536 params × 4 bytes<br/>≈ 6 KB]
+        MEM4[Activations per sample<br/>1×2×768 × 4 tensors<br/>≈ 24 KB]
+        MEM5[Total Parameters<br/>38,597,376 + 786,432 + 1,536<br/>= 39,385,344 params<br/>≈ 157 MB]
     end
     
     %% Styling
@@ -90,11 +124,15 @@ graph TD
     classDef embedding fill:#fff3e0,stroke:#f57c00,stroke-width:2px
     classDef position fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     classDef combine fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
+    classDef layernorm fill:#e0f7fa,stroke:#00838f,stroke-width:2px
+    classDef hardware fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     classDef info fill:#fff9c4,stroke:#f57f17,stroke-width:1px
     classDef output fill:#ffccbc,stroke:#d84315,stroke-width:2px
-    
+
     class T1,T2,T3,T4,T5,T6 tokenization
     class TE1,TE2,TE3,TE4 embedding
     class PE1,PE2,PE3,PE4,PE5 position
     class ADD1,ADD2,ADD3,ADD4 combine
-    class D1,D2,D3,D4,D5,D6,OP1,OP2,OP3,OP4,MEM1,MEM2,MEM3,MEM4 info
+    class LN1,LN2,LN3,LN4,LN5,LN6 layernorm
+    class HW1,HW2,HW3,HW4,HW5 hardware
+    class D1,D2,D3,D4,D5,D6,D7,OP1,OP2,OP3,OP4,OP5,MEM1,MEM2,MEM3,MEM4,MEM5 info
