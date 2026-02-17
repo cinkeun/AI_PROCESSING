@@ -2,6 +2,7 @@
 
 ## 목차
 1. [Tokenization (BPE)](#1-tokenization-bpe)
+   - 1.x [BPE 가속화 기법](#1x-bpe-가속화-기법)
 2. [Token Embedding](#2-token-embedding)
 3. [Position Embedding](#3-position-embedding)
 4. [Embedding Addition](#4-embedding-addition)
@@ -308,6 +309,47 @@ token_ids = [vocab[token] for token in tokens]
 # token_ids = [15496, 995]
 ```
 
+---
+
+**LUT인가, Hash Map인가?**
+
+직관적으로 LUT(Lookup Table)처럼 보이지만, 실제로는 **Hash Map**입니다.
+
+```
+진짜 LUT:  array[integer_key]  → O(1), 주소 = base + key × size (직접 계산)
+Hash Map:  hash(string_key) → bucket → value → O(1) 평균, but 해시 계산 필요
+```
+
+`vocab.json`의 key가 **문자열(string)**이기 때문에 정수 인덱싱이 불가능합니다:
+```
+"Hello"  → 정수가 아니므로 array["Hello"] 불가
+hash("Hello") → 버킷 위치 계산 → 15496 반환
+```
+
+**파이프라인 전체에서 자료구조 비교:**
+
+| 단계 | 자료구조 | 이유 |
+|------|----------|------|
+| 문자 → 초기 ID (byte_encoder) | **진짜 LUT** (256-entry 배열) | key가 정수(byte값 0~255) |
+| BPE merge rule 조회 | **Hash Map** | key가 문자열 쌍 ("e", "r") |
+| 토큰 string → ID (vocab.json) | **Hash Map** | key가 문자열 "Hello" |
+| token ID → embedding vector | **진짜 LUT** | key가 정수 ID → 배열 직접 인덱싱 |
+
+---
+
+**최적화: "토큰이 ID를 직접 가진다" — Rust 구현**
+
+HuggingFace Fast Tokenizer(Rust)는 BPE 자체를 **처음부터 ID 공간에서** 동작시킵니다:
+```
+① 각 문자에 초기 ID 할당     : 'H'→72, 'e'→68, 'l'→75, ...  (LUT, O(1))
+② merge rule을 ID 쌍으로 저장 : (72, 68) → 15496             (Hash Map)
+③ BPE가 ID를 직접 병합       : 문자열 중간 표현 없음
+→ 별도 vocab lookup 단계 자체가 사라짐
+```
+이 방식이 "토큰 자체에 ID가 내포된" 구조에 가장 가깝습니다.
+
+---
+
 **하드웨어 연산 관점:**
 ```
 Operation Type: Hash Table Lookup
@@ -522,6 +564,116 @@ tokens = tokenize(text)
 1. 토큰 길이가 불규칙
 2. 언어마다 효율성 차이
 3. 복잡한 전처리
+
+---
+
+### 1.x BPE 가속화 기법
+
+#### 왜 느린가?
+
+```
+원래 BPE 복잡도:
+- Training (merge 규칙 학습): O(n × V²) — n=corpus 크기, V=vocab 크기
+- Inference (규칙 적용):      O(k² × M) — k=단어 길이,  M=merge rule 수
+```
+
+BPE는 매 merge step마다 이전 결과에 의존하는 **순차적(sequential) 알고리즘**이기 때문에 GPU의 대규모 병렬 연산과 근본적으로 맞지 않습니다.
+
+---
+
+#### 소프트웨어 레벨 가속화
+
+**① HuggingFace Fast Tokenizers (가장 실용적)**
+- Rust로 구현된 [`tokenizers`](https://github.com/huggingface/tokenizers) 라이브러리 사용
+- 순수 Python 구현 대비 **10~100x 빠름**
+- GPT-2도 기본적으로 이를 사용:
+```python
+from transformers import AutoTokenizer
+tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)  # Rust 기반
+```
+
+**② YouTokenToMe (YTTM) — VK 팀**
+- C++ 기반, Training 시 **멀티스레드 병렬화**
+- BPE Training 기준 SentencePiece보다 **3~5x 빠름**
+
+**③ SentencePiece — Google**
+- C++ 구현 + Python 바인딩
+- Unigram LM 방식도 지원 (BPE보다 병렬화 유리)
+- BERT, T5, LLaMA 등이 사용
+
+---
+
+#### 알고리즘 레벨 최적화
+
+**Priority Queue 기반 BPE**
+```
+순진한 구현: 매 merge마다 전체 corpus 재스캔 → O(n²)
+Priority Queue: heap에 pair 빈도를 유지       → O(n log n)
+```
+
+**Trie / Aho-Corasick 기반 Inference**
+```
+순진한 구현: 50,000개 rule을 순서대로 시도 → O(M × k²)
+Trie lookup: 현재 위치에서 바로 매칭        → O(k)
+```
+
+**Word-level Caching — GPT-2가 실제로 사용**
+
+같은 단어는 항상 동일한 토큰으로 분리되므로, 한 번만 계산하고 결과를 캐싱합니다:
+```python
+# HuggingFace GPT2Tokenizer 내부
+self.cache = {}  # {"Hello": [15496], "world": [995], ...}
+
+def bpe(self, token):
+    if token in self.cache:
+        return self.cache[token]  # 재계산 없이 즉시 반환
+    # ... BPE 계산 후 cache에 저장
+    self.cache[token] = result
+    return result
+```
+
+---
+
+#### 하드웨어 레벨 가속화
+
+| 방법 | 설명 | 한계 |
+|------|------|------|
+| **NVIDIA nvText (RAPIDS cuDF)** | GPU 기반 토크나이저 | BPE 순차성으로 효과 제한적 |
+| **Sequence 간 병렬화** | 여러 단어/문장을 독립적으로 병렬 처리 | 단어 내부는 여전히 순차 |
+| **Pre-tokenization 가속** | regex 분리 단계만 GPU regex 엔진으로 병렬화 | 전체 파이프라인의 일부만 |
+
+**GPU 가속이 근본적으로 어려운 이유:**
+```
+BPE merge step N의 결과 → merge step N+1의 입력
+→ 데이터 의존성이 있어 단계를 건너뛸 수 없음
+→ GPU의 수천 개 코어를 활용하기 어려움
+```
+
+---
+
+#### 대안 알고리즘 (BPE 자체를 대체)
+
+| 알고리즘 | 사용 모델 | BPE 대비 장점 |
+|----------|-----------|---------------|
+| **Unigram LM** (SentencePiece) | T5, LLaMA, mBART | E-M 알고리즘 → 병렬화 유리 |
+| **WordPiece** | BERT, DistilBERT | likelihood 기반 merge → inference 빠름 |
+| **BPE-Dropout** | 학습 다양성 증가용 | Stochastic BPE, regularization 효과 |
+
+---
+
+#### GPT-2 실제 파이프라인 + 가속 포인트
+
+```
+텍스트 입력
+    ↓ regex pre-tokenization (공백/구두점 분리)  ← [병렬화 가능]
+    ↓ byte encoder 변환 (lookup table)           ← [O(1), 매우 빠름]
+    ↓ BPE merge 적용                             ← [Word Cache hit → 즉시 반환]
+    ↓ vocab.json lookup (hash map)               ← [O(1)]
+토큰 ID 출력
+```
+
+**실전 비중:** GPT-2 전체 inference에서 tokenization은 **< 1%** 시간을 차지합니다.
+병목은 항상 **Transformer 연산 (Attention, FFN)**입니다.
 
 ---
 

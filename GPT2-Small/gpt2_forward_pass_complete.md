@@ -102,7 +102,7 @@ byte_encoder = {
 initial_tokens = ['H', 'e', 'l', 'l', 'o', 'Ġ', 'w', 'o', 'r', 'l', 'd']
 ```
 
-**Step 3: BPE Merge (핵심 알고리즘)**
+**Step 3: BPE (Byte Pair Encoding) Merge (핵심 알고리즘)**
 
 GPT-2는 **50,000개의 merge 규칙**을 학습해둔 파일(`merges.txt`)을 가지고 있습니다:
 ```
@@ -914,6 +914,55 @@ K ≠ V 분리하면:
    다른 V 정보를 전달할 수 있음
 ```
 
+**각 Head는 독립적인 Wq, Wk, Wv를 가지는가?**
+
+```
+개념적으로: 각 head별 독립 행렬
+
+  Head 1:  Wq₁ [768, 64],  Wk₁ [768, 64],  Wv₁ [768, 64]
+  Head 2:  Wq₂ [768, 64],  Wk₂ [768, 64],  Wv₂ [768, 64]
+  ...
+  Head 12: Wq₁₂ [768, 64], Wk₁₂ [768, 64], Wv₁₂ [768, 64]
+
+실제 구현: 하나의 큰 행렬로 합쳐서 저장 (연산 효율)
+
+  W_q [768, 768] = [Wq₁ | Wq₂ | ... | Wq₁₂]  ← column-wise concat
+  W_k [768, 768] = [Wk₁ | Wk₂ | ... | Wk₁₂]
+  W_v [768, 768] = [Wv₁ | Wv₂ | ... | Wv₁₂]
+
+  X @ W_q → [L, 768] → view(L, 12, 64) → 12개 head로 split
+  → GEMM을 한 번만 실행 (효율적)
+  → 수학적으로 12번 따로 하는 것과 동일
+```
+
+**파라미터 수는 Single-Head와 동일:**
+```
+Single-Head:  Wq [768, 768]       = 589,824 params
+Multi-Head:   12 × Wq [768, 64]   = 12 × 49,152 = 589,824 params (동일!)
+```
+
+**그럼 왜 Multi-Head가 더 좋은가?**
+```
+Single-Head Attention (d_k=768):
+├─ 하나의 attention pattern
+└─ 한 가지 관계만 포착
+
+Multi-Head Attention (12 heads, d_k=64):
+├─ Head 1:  문법적 의존 관계 ("주어 ↔ 동사")
+├─ Head 2:  의미적 유사성 ("동의어들")
+├─ Head 3:  위치적 패턴 ("인접 토큰")
+├─ ...
+├─ Head 12: 또 다른 패턴
+└─ → 12가지 관계를 동시에 병렬 포착 → concat → W_o로 통합
+
+핵심: 파라미터 수는 같지만 표현력이 훨씬 풍부함
+├─ 각 head가 768차원을 64차원 부분공간(subspace)으로 투영
+├─ 각 subspace에서 서로 다른 관계 특화 학습
+└─ 최종적으로 다양한 관계 정보를 한 벡터로 통합
+```
+
+---
+
 **처리 과정:**
 
 ```python
@@ -1667,6 +1716,95 @@ where:
 - No additional parameters!
 ```
 
+---
+
+**오퍼레이션 상세: 단순한 행렬 곱셈**
+
+```
+h_norm [L, 768]  @  W_lm [768, 50257]  =  logits [L, 50257]
+       ↑                    ↑                      ↑
+  Transformer의           가중치 행렬            각 토큰의
+  최종 출력 벡터         (50,257개 열)          raw score
+```
+
+**직관: 각 열(column)이 토큰 하나를 의미**
+
+`W_lm [768, 50257]`을 열 기준으로 쪼개면:
+```
+W_lm = [ w_"the" | w_"Hello" | w_"world" | w_"," | ... ]
+          [768]      [768]       [768]      [768]
+```
+
+행렬 곱셈은 실질적으로 **50,257번의 내적(dot product)**:
+```
+logit["the"]   = h_norm · w_"the"    → h와 "the" 벡터의 유사도
+logit["Hello"] = h_norm · w_"Hello"  → h와 "Hello" 벡터의 유사도
+logit["world"] = h_norm · w_"world"  → h와 "world" 벡터의 유사도
+...
+
+높은 logit = "Transformer가 다음으로 이 토큰을 예측함"
+```
+
+---
+
+**Weight Tying: W_lm = E^T (전치행렬 공유)**
+
+```
+Token Embedding:  E     [50257, 768]  (token_id → 768차원 벡터)
+LM Head:          W_lm  [768, 50257]  = E^T  ← 같은 행렬의 전치!
+```
+
+추가 파라미터 0개. 같은 행렬을 양방향으로 활용:
+```
+입력 방향 (Embedding):
+  token_id 15496 → E[15496] = [0.23, -0.89, ...]  "Hello의 의미 벡터"
+
+출력 방향 (LM Head):
+  h_norm · E[15496] = "h가 Hello의 의미와 얼마나 닮았나?"
+
+→ h_norm이 "Hello" embedding과 방향이 비슷하면
+  → logit["Hello"]가 높아짐
+  → 다음 토큰으로 "Hello"를 예측
+```
+
+즉, **"토큰 → 벡터"** 변환 행렬의 역방향이 **"벡터 → 토큰"** 변환입니다.
+
+---
+
+**전체 흐름 예시: "Hello world" 다음 토큰 예측**
+
+```
+Transformer 12블록 통과 후 마지막 위치의 hidden state:
+h_norm[-1] = [-0.12, 0.45, ..., 0.33]  ← "world" 이후 문맥 요약 (768차원)
+
+LM Head 적용 (내적 50,257번):
+logit["!"]     = h_norm[-1] · E["!"]     =  8.3  ← 높음
+logit[","]     = h_norm[-1] · E[","]     =  7.1
+logit["."]     = h_norm[-1] · E["."]     =  6.8
+logit["the"]   = h_norm[-1] · E["the"]   =  3.2
+logit["Hello"] = h_norm[-1] · E["Hello"] =  0.1  ← 낮음
+...
+
+→ softmax → 확률 분포 → 샘플링 → "!" 선택
+```
+
+---
+
+**학습 시 vs 추론 시: 사용 position 차이**
+
+```
+학습 시 (Teacher Forcing):
+  position 0의 logit → position 1 토큰 예측  ↗ L개 예측을
+  position 1의 logit → position 2 토큰 예측    동시에 계산
+  ...                                           (병렬, 효율적)
+  position L-1의 logit → position L 토큰 예측 ↗
+
+추론 시 (Autoregressive Generation):
+  마지막 position의 logit만 사용 → 다음 토큰 예측
+  └─ 나머지 position은 계산 불필요
+  └─ FLOPs: 78.9B → 77M (1000× 절약)
+```
+
 **처리 과정:**
 ```python
 class GPT2LMHead(nn.Module):
@@ -1766,8 +1904,24 @@ Optimization: Adaptive Softmax
 
 **입력/출력:**
 ```
-Input:  logits [B, vocab_size] (usually last position only)
-Output: next_token_id [B] (sampled)
+LM Head 출력:    logits [B, L, vocab_size]  ← 모든 position의 logits
+                        ↓ logits[:, -1, :]  ← 마지막 position만 슬라이싱
+Sampling 입력:   logits [B, vocab_size]
+Output:          next_token_id [B]
+
+학습 시: [B, L, V] 그대로 → 모든 position에 cross-entropy loss 계산
+추론 시: [:, -1, :] 슬라이싱 → [B, V] → 샘플링 (다음 토큰 1개 생성)
+```
+
+**왜 마지막 position인가:**
+```python
+logits = lm_head(h_norm)        # [B, L, 50257] — 전체 출력
+logits_last = logits[:, -1, :]  # [B, 50257]    — 마지막 position만 추출
+next_token = sample(logits_last)
+
+# position -1 (마지막)의 logit = "지금까지 본 모든 토큰을 고려한 후
+#                                  다음에 올 토큰의 확률 분포"
+# position 0의 logit는 첫 번째 토큰만 보고 예측한 것 → 추론 시 불필요
 ```
 
 **수학적 정의:**
